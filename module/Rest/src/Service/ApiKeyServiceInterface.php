@@ -42,4 +42,12 @@ interface ApiKeyServiceInterface
      * @throws ApiKeyConflictException
      */
     public function renameApiKey(Renaming $apiKeyRenaming): ApiKey;
+
+    /**
+     * Extends a legacy API key, rotates a newer API key, or creates a missing API key.
+     * Returns the plaintext key that callers should use.
+     *
+     * @throws InvalidArgumentException
+     */
+    public function provision(ApiKeyMeta $apiKeyMeta): string;
 }

@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 namespace Shlinkio\Shlink\Rest\ApiKey\Repository;
 
+use Cake\Chronos\Chronos;
 use Doctrine\DBAL\LockMode;
 use Doctrine\ORM\QueryBuilder;
 use Happyr\DoctrineSpecification\Repository\EntitySpecificationRepository;
+use Shlinkio\Shlink\Common\Doctrine\Type\ChronosDateTimeType;
 use Shlinkio\Shlink\Rest\ApiKey\Model\ApiKeyMeta;
 use Shlinkio\Shlink\Rest\Entity\ApiKey;
+
+use function mb_strtolower;
+use function str_replace;
 
 /**
  * @extends EntitySpecificationRepository<ApiKey>
@@ -68,6 +73,44 @@ class ApiKeyRepository extends EntitySpecificationRepository implements ApiKeyRe
         $this->queryBuilderByName($qb, $name);
 
         return $qb->getQuery()->execute();
+    }
+
+    /** @inheritDoc */
+    public function findForProvisioning(string $name): array
+    {
+        $escapedName = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], mb_strtolower($name));
+        $query = $this->getEntityManager()
+            ->createQueryBuilder()
+            ->select('a')
+            ->from(ApiKey::class, 'a')
+            ->where('LOWER(a.name) = :name')
+            ->orWhere("LOWER(a.name) LIKE :legacyName ESCAPE '!'")
+            ->setParameter('name', mb_strtolower($name))
+            ->setParameter('legacyName', $escapedName . ' - %')
+            ->getQuery();
+        $query->setLockMode(LockMode::PESSIMISTIC_WRITE);
+
+        /** @var ApiKey[] $apiKeys */
+        $apiKeys = $query->getResult();
+        return $apiKeys;
+    }
+
+    /** @inheritDoc */
+    public function updateCredentials(string $id, string $hashedKey, Chronos $expirationDate): void
+    {
+        $this->getEntityManager()
+            ->createQueryBuilder()
+            ->update(ApiKey::class, 'a')
+            ->set('a.key', ':key')
+            ->set('a.expirationDate', ':expirationDate')
+            ->set('a.enabled', ':enabled')
+            ->where('a.id = :id')
+            ->setParameter('key', $hashedKey)
+            ->setParameter('expirationDate', $expirationDate, ChronosDateTimeType::CHRONOS_DATETIME)
+            ->setParameter('enabled', true)
+            ->setParameter('id', $id)
+            ->getQuery()
+            ->execute();
     }
 
     /**

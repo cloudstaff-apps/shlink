@@ -54,4 +54,30 @@ class ApiKeyRepositoryTest extends DatabaseTestCase
         // Verify the API key has been deleted
         self::assertNull($this->repo->findOneBy(['name' => 'foo']));
     }
+
+    #[Test]
+    public function provisioningLookupAndCredentialUpdatePreserveApiKeyId(): void
+    {
+        $plainTextKey = 'legacy-plain-text-key';
+        $apiKey = ApiKey::fromMeta(ApiKeyMeta::fromParams(
+            key: $plainTextKey,
+            name: 'user_name@example.com - ' . $plainTextKey,
+        ));
+        $this->getEntityManager()->persist($apiKey);
+        $this->getEntityManager()->flush();
+        $id = $apiKey->getId();
+
+        self::assertSame([$apiKey], $this->repo->findForProvisioning('USER_NAME@example.com'));
+
+        $expirationDate = \Cake\Chronos\Chronos::parse('2027-12-31');
+        $newHash = ApiKey::hashKey('new-key');
+        $this->repo->updateCredentials($id, $newHash, $expirationDate);
+        $this->getEntityManager()->clear();
+
+        $updated = $this->repo->find($id);
+        self::assertSame($id, $updated?->getId());
+        self::assertSame($newHash, $updated?->key);
+        self::assertEquals($expirationDate, $updated?->expirationDate);
+        self::assertTrue($updated?->isEnabled());
+    }
 }

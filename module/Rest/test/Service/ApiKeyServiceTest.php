@@ -300,4 +300,72 @@ class ApiKeyServiceTest extends TestCase
 
         $this->service->deleteByName($name);
     }
+
+    #[Test]
+    public function provisioningCreatesMissingApiKey(): void
+    {
+        $meta = ApiKeyMeta::fromParams(name: 'user@example.com', expirationDate: Chronos::parse('2027-12-31'));
+        $this->repo->expects($this->once())->method('findForProvisioning')->with($meta->name)->willReturn([]);
+        $this->em->expects($this->once())->method('persist')->with($this->isInstanceOf(ApiKey::class));
+
+        self::assertSame($meta->key, $this->service->provision($meta));
+    }
+
+    #[Test]
+    public function provisioningExtendsVerifiedLegacyApiKey(): void
+    {
+        $name = 'user@example.com';
+        $plainTextKey = '05ae6f9f-legacy-key';
+        $expirationDate = Chronos::parse('2027-12-31');
+        $legacyKey = ApiKey::fromMeta(ApiKeyMeta::fromParams(key: $plainTextKey, name: $name . ' - ' . $plainTextKey));
+        $legacyKey->setId('12');
+        $this->repo->expects($this->once())->method('findForProvisioning')->with($name)->willReturn([$legacyKey]);
+        $this->repo->expects($this->once())->method('updateCredentials')
+                   ->with('12', $legacyKey->key, $expirationDate);
+
+        self::assertSame($plainTextKey, $this->service->provision(ApiKeyMeta::fromParams(
+            name: $name,
+            expirationDate: $expirationDate,
+        )));
+    }
+
+    #[Test]
+    public function provisioningRotatesNewApiKeyInPlace(): void
+    {
+        $name = 'user@example.com';
+        $expirationDate = Chronos::parse('2027-12-31');
+        $existingKey = ApiKey::fromMeta(ApiKeyMeta::fromParams(name: $name));
+        $existingKey->setId('15');
+        $newPlainTextKey = null;
+        $this->repo->expects($this->once())->method('findForProvisioning')->with($name)->willReturn([$existingKey]);
+        $this->repo->expects($this->once())->method('updateCredentials')
+                   ->willReturnCallback(static function (
+                       string $id,
+                       string $hashedKey,
+                       Chronos $date,
+                   ) use (&$newPlainTextKey, $expirationDate): void {
+                       self::assertSame('15', $id);
+                       self::assertSame($expirationDate, $date);
+                       $newPlainTextKey = $hashedKey;
+                   });
+
+        $result = $this->service->provision(ApiKeyMeta::fromParams(name: $name, expirationDate: $expirationDate));
+
+        self::assertSame(ApiKey::hashKey($result), $newPlainTextKey);
+    }
+
+    #[Test]
+    public function provisioningRejectsInvalidLegacyKey(): void
+    {
+        $name = 'user@example.com';
+        $legacyKey = ApiKey::fromMeta(ApiKeyMeta::fromParams(key: 'different-key', name: $name . ' - exposed-key'));
+        $this->repo->method('findForProvisioning')->willReturn([$legacyKey]);
+        $this->repo->expects($this->never())->method('updateCredentials');
+        $this->expectException(InvalidArgumentException::class);
+
+        $this->service->provision(ApiKeyMeta::fromParams(
+            name: $name,
+            expirationDate: Chronos::parse('2027-12-31'),
+        ));
+    }
 }

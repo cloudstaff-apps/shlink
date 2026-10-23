@@ -29,6 +29,7 @@ return [
             Command\Api\ListKeysCommand::NAME => Command\Api\ListKeysCommand::class,
             Command\Api\InitialApiKeyCommand::NAME => Command\Api\InitialApiKeyCommand::class,
             Command\Api\RenameApiKeyCommand::NAME => Command\Api\RenameApiKeyCommand::class,
+            Command\Api\ProvisionApiKeyCommand::NAME => Command\Api\ProvisionApiKeyCommand::class,
 
             Command\Tag\ListTagsCommand::NAME => Command\Tag\ListTagsCommand::class,
             Command\Tag\RenameTagCommand::NAME => Command\Tag\RenameTagCommand::class,

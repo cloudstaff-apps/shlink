@@ -14,6 +14,10 @@ use Shlinkio\Shlink\Rest\Exception\ApiKeyConflictException;
 use Shlinkio\Shlink\Rest\Exception\ApiKeyNotFoundException;
 
 use function sprintf;
+use function str_starts_with;
+use function strlen;
+use function strtolower;
+use function substr;
 
 readonly class ApiKeyService implements ApiKeyServiceInterface
 {
@@ -122,6 +126,53 @@ readonly class ApiKeyService implements ApiKeyServiceInterface
         });
 
         return $apiKey;
+    }
+
+    /** @inheritDoc */
+    public function provision(ApiKeyMeta $apiKeyMeta): string
+    {
+        $expirationDate = $apiKeyMeta->expirationDate;
+        if ($expirationDate === null) {
+            throw new InvalidArgumentException('An expiration date is required when provisioning an API key.');
+        }
+
+        return $this->em->wrapInTransaction(function () use ($apiKeyMeta, $expirationDate): string {
+            $matches = $this->repo->findForProvisioning($apiKeyMeta->name);
+            if ($matches === []) {
+                $this->em->persist(ApiKey::fromMeta($apiKeyMeta));
+                return $apiKeyMeta->key;
+            }
+
+            if (count($matches) > 1) {
+                throw new InvalidArgumentException(sprintf(
+                    'More than one API key matches name "%s". Resolve duplicates before provisioning.',
+                    $apiKeyMeta->name,
+                ));
+            }
+
+            $apiKey = $matches[0];
+            $legacyPrefix = $apiKeyMeta->name . ' - ';
+            if (str_starts_with(strtolower($apiKey->name), strtolower($legacyPrefix))) {
+                $plainTextKey = substr($apiKey->name, strlen($legacyPrefix));
+                if (ApiKey::hashKey($plainTextKey) !== $apiKey->key) {
+                    throw new InvalidArgumentException(sprintf(
+                        'Legacy API key stored in name "%s" does not match its key hash.',
+                        $apiKey->name,
+                    ));
+                }
+
+                $this->repo->updateCredentials($apiKey->getId(), $apiKey->key, $expirationDate);
+                return $plainTextKey;
+            }
+
+            $newMeta = ApiKeyMeta::create();
+            $this->repo->updateCredentials(
+                $apiKey->getId(),
+                ApiKey::hashKey($newMeta->key),
+                $expirationDate,
+            );
+            return $newMeta->key;
+        });
     }
 
     private function findByKey(string $key): ApiKey|null
